@@ -2,6 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const rlm = @import("raylib-math");
 const math = std.math;
+const rand = std.rand;
 
 const Vector2 = rl.Vector2;
 const THICKNESS = 1.5;
@@ -22,7 +23,7 @@ const Ship = struct {
 
 var state: State = undefined;
 
-pub fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
+fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
     const Transformer = struct {
         org: Vector2,
         scale: f32,
@@ -53,7 +54,51 @@ pub fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) vo
 //     _ = pos;
 // }
 
-pub fn update() void {
+const AsteroidSize = enum {
+    BIG,
+    MEDIUM,
+    SMALL,
+
+    fn size(self: @This()) f32 {
+        return switch (self) {
+            .BIG => SCALE * 3.0,
+            .MEDIUM => SCALE * 1.4,
+            .SMALL => SCALE * 0.8,
+        };
+    }
+};
+
+fn drawAsteroid(pos: Vector2, size: AsteroidSize, seed: u64) !void {
+
+    var prng = rand.Xoshiro256.init(seed);
+    var random = prng.random();
+
+    var points = try std.BoundedArray(Vector2, 16).init(0);
+    const n = random.intRangeLessThan(i32, 8, 15);
+
+    for (0..@intCast(n)) |i| {
+        var radius = 0.3 + (0.2 * random.float(f32));
+
+        if (random.float(f32) < 0.2) {
+            radius -= 0.2;
+        }
+
+        const angle = (@as(f32, @floatFromInt(i)) * (math.tau / @as(f32, @floatFromInt(n)))) + (math.pi * 0.125 * random.float(f32));
+
+        try points.append(
+            rlm.vector2Scale(Vector2.init(math.cos(angle), math.sin(angle)), radius)
+        );
+    }
+    
+    drawLines(
+        pos,
+        size.size(),
+        0.0,
+        points.slice()
+    );
+}
+
+fn update() !void {
     //rotation / second
     const ROT_SPEED: f32 = 1.0;
     const SHIP_SPEED: f32 = 32.0;
@@ -78,7 +123,7 @@ pub fn update() void {
     state.ship.pos = Vector2.init(@mod(state.ship.pos.x, SIZE.x), @mod(state.ship.pos.y, SIZE.y));
 }
 
-pub fn render() void {
+fn render() !void {
     drawLines(
         state.ship.pos,
         SCALE,
@@ -91,6 +136,23 @@ pub fn render() void {
             Vector2.init(-0.3, -0.4),
         },
     );
+
+    if (rl.isKeyDown(.key_w) and @mod(@as(i32, @intFromFloat(state.now * 20)), 2) == 0) {
+        drawLines(
+            state.ship.pos,
+            SCALE,
+            state.ship.rot,
+            &.{
+                Vector2.init(-0.2, -0.4),
+                Vector2.init(0.0, -0.8),
+                Vector2.init(0.2, -0.4),
+            },
+        );
+    }
+
+    try drawAsteroid(Vector2.init(50, 50), AsteroidSize.BIG, 2330);
+    try drawAsteroid(Vector2.init(250, 250), AsteroidSize.BIG, 2130);
+    try drawAsteroid(Vector2.init(450, 450), AsteroidSize.BIG, 2338);
 }
 
 pub fn main() !void {
@@ -110,12 +172,12 @@ pub fn main() !void {
         state.delta = rl.getFrameTime();
         state.now  += state.delta;
 
-        update();
+        try update();
 
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        render();
+        try render();
 
         rl.clearBackground(rl.Color.black);
     }
