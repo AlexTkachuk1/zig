@@ -1,6 +1,0 @@
-zig-cache/
-zig-out/
-.idea/
-Project/*
-libraylib.a
-**/.DS_Store
