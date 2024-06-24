@@ -13,6 +13,15 @@ const State = struct {
     now: f32 = 0,
     delta: f32 = 0,
     ship: Ship,
+    asteroids: std.ArrayList(Asteroid),
+    rand: rand.Random,
+};
+
+const Asteroid = struct {
+    pos: Vector2,
+    vel: Vector2,
+    size: AsteroidSize,
+    seed: u64,
 };
 
 const Ship = struct {
@@ -50,10 +59,6 @@ fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
     }
 }
 
-// pub fn drawShip(pos: Vector2) void {
-//     _ = pos;
-// }
-
 const AsteroidSize = enum {
     BIG,
     MEDIUM,
@@ -69,7 +74,6 @@ const AsteroidSize = enum {
 };
 
 fn drawAsteroid(pos: Vector2, size: AsteroidSize, seed: u64) !void {
-
     var prng = rand.Xoshiro256.init(seed);
     var random = prng.random();
 
@@ -101,7 +105,7 @@ fn drawAsteroid(pos: Vector2, size: AsteroidSize, seed: u64) !void {
 fn update() !void {
     //rotation / second
     const ROT_SPEED: f32 = 1.0;
-    const SHIP_SPEED: f32 = 32.0;
+    const SHIP_SPEED: f32 = 24.0;
 
     if (rl.isKeyDown(.key_a)) {
         state.ship.rot -= state.delta * math.tau * ROT_SPEED;
@@ -117,10 +121,23 @@ fn update() !void {
         state.ship.vel = rlm.vector2Add(state.ship.vel, rlm.vector2Scale(shipDir, state.delta * SHIP_SPEED));
     }
 
-    const DRAG: f32 = 0.03;
+    const DRAG: f32 = 0.018;
     state.ship.vel = rlm.vector2Scale(state.ship.vel, 1.0 - DRAG);
     state.ship.pos = rlm.vector2Add(state.ship.pos, state.ship.vel);
-    state.ship.pos = Vector2.init(@mod(state.ship.pos.x, SIZE.x), @mod(state.ship.pos.y, SIZE.y));
+    state.ship.pos = Vector2.init(
+        @mod(state.ship.pos.x, SIZE.x),
+        @mod(state.ship.pos.y, SIZE.y),
+    );
+
+
+    for (state.asteroids.items) |*a| {
+        a.pos = rlm.vector2Add(a.pos, a.vel);
+
+        a.pos = Vector2.init(
+            @mod(a.pos.x, SIZE.x),
+            @mod(a.pos.y, SIZE.y),
+        );
+    }
 }
 
 fn render() !void {
@@ -150,23 +167,59 @@ fn render() !void {
         );
     }
 
-    try drawAsteroid(Vector2.init(50, 50), AsteroidSize.BIG, 2330);
-    try drawAsteroid(Vector2.init(250, 250), AsteroidSize.BIG, 2130);
-    try drawAsteroid(Vector2.init(450, 450), AsteroidSize.BIG, 2338);
+    for (state.asteroids.items) |a| {
+        try drawAsteroid(a.pos, a.size, a.seed);
+    }
+}
+
+fn initLevel() !void {
+    for(0..14) |_| {
+        const angle = math.tau * state.rand.float(f32);
+
+         try state.asteroids.append(
+            .{
+                .pos = Vector2.init(
+                    state.rand.float(f32) * SIZE.x,
+                    state.rand.float(f32) * SIZE.y,
+                ),
+                .vel = rlm.vector2Scale(
+                    Vector2.init(
+                        math.cos(angle),
+                        math.sin(angle)
+                    ),
+                    3.0 * state.rand.float(f32),
+                ),
+                .size = state.rand.enumValue(AsteroidSize),
+                .seed = state.rand.int(u64),
+            }
+        );
+    }
 }
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer std.debug.assert(gpa.deinit() == .ok);
+
     rl.initWindow(SIZE.x , SIZE.y, "LARGE SPACE ROCKS");
     rl.setWindowPosition(100, 100);
     rl.setTargetFPS(60);
+
+    var prng = rand.Xoshiro256.init(@bitCast(std.time.timestamp()));
 
     state = .{
         .ship = .{
             .rot = 0.0,
             .pos = rlm.vector2Scale(SIZE, 0.5),
             .vel = Vector2.init(0, 0),
-        }
+        },
+        .asteroids = std.ArrayList(Asteroid).init(allocator),
+        .rand = prng.random(),
     };
+
+    defer state.asteroids.deinit();
+
+    try initLevel();
 
     while (!rl.windowShouldClose()) {
         state.delta = rl.getFrameTime();
