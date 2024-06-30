@@ -158,6 +158,29 @@ fn drawAsteroid(pos: Vector2, size: AsteroidSize, seed: u64) !void {
 fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
     a.remove = true;
 
+    for (0..10) |_| {
+        const angle = math.tau * state.rand.float(f32);
+        try state.particles.append(.{
+            .pos = rlm.vector2Add(
+                a.pos,
+                Vector2.init(
+                    state.rand.float(f32) * 3,
+                    state.rand.float(f32) * 3,
+                ),
+            ),
+            .vel = rlm.vector2Scale(
+                Vector2.init(math.cos(angle), math.sin(angle)),
+                1.0 + 4.0 * state.rand.float(f32),
+            ),
+            .ttl = 0.5 + (0.4 * state.rand.float(f32)),
+            .values = .{
+                .DOT = .{
+                    .radius = SCALE * 0.025,
+                }
+            }
+        });
+    }
+
     if (a.size == .SMALL) {
         return;
     }
@@ -272,7 +295,6 @@ fn update() !void {
                                 .len = SCALE * (0.2 + (0.8 * state.rand.float(f32))),
                             }
                         }
-
                     });
                 }
             }
