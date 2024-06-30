@@ -18,6 +18,9 @@ const State = struct {
     particles: std.ArrayList(Particle),
     projectiles: std.ArrayList(Projectile),
     rand: rand.Random,
+    lives: usize = 0,
+    score: usize = 0,
+    reset: bool = false,
 };
 
 const Asteroid = struct {
@@ -64,12 +67,13 @@ const Projectile = struct {
     pos: Vector2,
     vel: Vector2,
     ttl: f32,
+    spawn: f32,
     remove: bool = false,
 };
 
 var state: State = undefined;
 
-fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
+fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2, connect: bool) void {
     const Transformer = struct {
         org: Vector2,
         scale: f32,
@@ -86,7 +90,8 @@ fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
         .rot = rot,
     };
 
-    for (0..points.len) |i| {
+    const bound = if (connect) points.len else (points.len - 1);
+    for (0..bound) |i| {
         rl.drawLineEx(
             t.apply(points[i]),
             t.apply(points[(i + 1) % points.len]),
@@ -96,10 +101,57 @@ fn drawLines(org: Vector2, scale: f32, rot: f32, points: []const Vector2) void {
     }
 }
 
+fn drawNumber(n: usize, pos: Vector2) !void {
+    const NUMBER_LINES = [10][]const [2]f32{
+        &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 }, .{ 0, 0 } },
+        &.{ .{ 0.5, 0 }, .{ 0.5, 1 } },
+        &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0.5 }, .{ 0, 0.5 }, .{ 0, 0 }, .{ 1, 0 } },
+        &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0.5 }, .{ 0, 0.5 }, .{ 1, 0.5 }, .{ 1, 0 }, .{ 0, 0 } },
+        &.{ .{ 0, 1 }, .{ 0, 0.5 }, .{ 1, 0.5 }, .{ 1, 1 }, .{ 1, 0 } },
+        &.{ .{ 1, 1 }, .{ 0, 1 }, .{ 0, 0.5 }, .{ 1, 0.5 }, .{ 1, 0 }, .{ 0, 0 } },
+        &.{ .{ 0, 1 }, .{ 0, 0 }, .{ 1, 0 }, .{ 1, 0.5 }, .{ 0, 0.5 } },
+        &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 } },
+        &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 }, .{ 0, 0.5 }, .{ 1, 0.5 }, .{ 0, 0.5 }, .{ 0, 0 } },
+        &.{ .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 }, .{ 0, 0.5 }, .{ 1, 0.5 } },
+    };
+
+    var pos2 = pos;
+
+    var val = n;
+    var digits: usize = 0;
+    while (val >= 0) {
+        digits += 1;
+        val /= 10;
+        if (val == 0) { break; }
+    }
+
+    // pos2.x += @as(f32, @floatFromInt(digits)) * SCALE;
+    val = n;
+    while (val >= 0) {
+        var points = try std.BoundedArray(Vector2, 16).init(0);
+        for (NUMBER_LINES[val % 10]) |p| {
+            try points.append(Vector2.init(p[0] - 0.5, (1 - p[1]) - 0.5));
+        }
+
+        drawLines(pos2, SCALE * 0.8, 0, points.slice(), false);
+        pos2.x -= SCALE;
+        val /= 10;
+        if (val == 0) { break; }
+    }
+}
+
 const AsteroidSize = enum {
     BIG,
     MEDIUM,
     SMALL,
+
+    fn score(self: @This()) usize {
+        return switch (self) {
+            .BIG => 20,
+            .MEDIUM => 50,
+            .SMALL => 100,
+        };
+    }
 
     fn size(self: @This()) f32 {
         return switch (self) {
@@ -151,18 +203,44 @@ fn drawAsteroid(pos: Vector2, size: AsteroidSize, seed: u64) !void {
         pos,
         size.size(),
         0.0,
-        points.slice()
+        points.slice(),
+        true,
     );
 }
 
-fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
-    a.remove = true;
-
-    for (0..10) |_| {
+fn splatLines(pos: Vector2, count: usize) !void {
+    for (0..count) |_| {
         const angle = math.tau * state.rand.float(f32);
         try state.particles.append(.{
             .pos = rlm.vector2Add(
-                a.pos,
+                pos,
+                Vector2.init(
+                    state.rand.float(f32) * 3,
+                    state.rand.float(f32) * 3,
+                ),
+            ),
+            .vel = rlm.vector2Scale(
+                Vector2.init(math.cos(angle), math.sin(angle)),
+                2.0 * state.rand.float(f32),
+
+            ),
+            .ttl = 2.0 + state.rand.float(f32),
+            .values = .{
+                .LINE = .{
+                    .rot = math.tau * state.rand.float(f32),
+                    .len = SCALE * (0.2 + (0.8 * state.rand.float(f32))),
+                }
+            }
+        });
+    }
+}
+
+fn splatDots(pos: Vector2, count: usize) !void {
+    for (0..count) |_| {
+        const angle = math.tau * state.rand.float(f32);
+        try state.particles.append(.{
+            .pos = rlm.vector2Add(
+                pos,
                 Vector2.init(
                     state.rand.float(f32) * 3,
                     state.rand.float(f32) * 3,
@@ -180,6 +258,13 @@ fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
             }
         });
     }
+}
+
+fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
+    state.score += a.size.score();
+    a.remove = true;
+
+    try splatDots(a.pos, 10);
 
     if (a.size == .SMALL) {
         return;
@@ -199,9 +284,9 @@ fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
                 .vel = rlm.vector2Add(
                     rlm.vector2Scale(
                         dir,
-                        a.size.velosityScale() * 1.5 * state.rand.float(f32),
+                        a.size.velosityScale() * 2.2 * state.rand.float(f32),
                     ),
-                    if (impact) |i| rlm.vector2Scale(i, 1.5) else Vector2.init(0,0),
+                    if (impact) |i| rlm.vector2Scale(i, 0.7) else Vector2.init(0,0),
                 ),
                 .size = size,
                 .seed = state.rand.int(u64),
@@ -211,6 +296,11 @@ fn hitAsteroid(a: *Asteroid, impact: ?Vector2) !void {
 }
 
 fn update() !void {
+    if (state.reset) {
+        state.reset = false;
+        try resetGame();
+    }
+
     if (!state.ship.isDead()) {
         //rotation / second
         const ROT_SPEED: f32 = 1.0;
@@ -245,15 +335,26 @@ fn update() !void {
                     rlm.vector2Scale(shipDir, SCALE * 0.55),
                 ),
                 .vel = rlm.vector2Scale(shipDir, 10),
-                .ttl = 1.0,
+                .ttl = 1.25,
+                .spawn = state.now,
             });
 
             state.ship.vel = rlm.vector2Add(state.ship.vel, rlm.vector2Scale(shipDir, -0.5));
         }
+
+        // check for projectile v. ship collision
+        for (state.projectiles.items) |*p| {
+            if (!p.remove
+            and (state.now - p.spawn) > 0.05
+            and rlm.vector2Distance(state.ship.pos, p.pos) < (SCALE * 0.7)
+            ) {
+                p.remove = true;
+                state.ship.deathTime = state.now;
+            }
+        }
     }
 
     // add asteroids from queue
-
     for (state.asteroids_queue.items) |a| {
         try state.asteroids.append(a);
     }
@@ -272,31 +373,7 @@ fn update() !void {
 
             if (!state.ship.isDead() and rlm.vector2Distance(a.pos, state.ship.pos) < a.size.size() * a.size.collisionScale()) {
                 state.ship.deathTime = state.now;
-
-                for (0..5) |_| {
-                    const angle = math.tau * state.rand.float(f32);
-                    try state.particles.append(.{
-                        .pos = rlm.vector2Add(
-                            state.ship.pos,
-                            Vector2.init(
-                                state.rand.float(f32) * 3,
-                                state.rand.float(f32) * 3,
-                            ),
-                        ),
-                        .vel = rlm.vector2Scale(
-                            Vector2.init(math.cos(angle), math.sin(angle)),
-                            2.0 * state.rand.float(f32),
-
-                        ),
-                        .ttl = 2.0 + state.rand.float(f32),
-                        .values = .{
-                            .LINE = .{
-                                .rot = math.tau * state.rand.float(f32),
-                                .len = SCALE * (0.2 + (0.8 * state.rand.float(f32))),
-                            }
-                        }
-                    });
-                }
+                try hitAsteroid(a, rlm.vector2Normalize(state.ship.vel));
             }
 
             // check for projectile v. asteroid collision
@@ -355,24 +432,46 @@ fn update() !void {
         }
     }
 
+    if (state.ship.deathTime == state.now) {
+        try splatDots(state.ship.pos, 20);
+        try splatLines(state.ship.pos, 5);
+    }
+
     if (state.ship.isDead() and (state.now - state.ship.deathTime) > 3.0) {
         try resetStage();
     }
 }
 
+const SHIP_LINES = [_] Vector2{
+    Vector2.init(-0.4, -0.5),
+    Vector2.init(0, 0.5),
+    Vector2.init(0.4, -0.5),
+    Vector2.init(0.3, -0.4),
+    Vector2.init(-0.3, -0.4),
+};
+
 fn render() !void {
+    // draw remaining lives
+    for (0..state.lives) |i| {
+        drawLines(
+            Vector2.init(SCALE + (@as(f32, @floatFromInt(i)) * SCALE), SCALE),
+            SCALE,
+            -math.pi,
+            &SHIP_LINES,
+            true,
+        );
+    }
+
+    // draw score
+    try drawNumber(state.score, Vector2.init(SIZE.x - SCALE, SCALE));
+
     if (!state.ship.isDead()) {
         drawLines(
             state.ship.pos,
             SCALE,
             state.ship.rot,
-            &.{
-                Vector2.init(-0.4, -0.5),
-                Vector2.init(0, 0.5),
-                Vector2.init(0.4, -0.5),
-                Vector2.init(0.3, -0.4),
-                Vector2.init(-0.3, -0.4),
-            },
+            &SHIP_LINES,
+            true,
         );
 
         if (rl.isKeyDown(.key_w) and @mod(@as(i32, @intFromFloat(state.now * 20)), 2) == 0) {
@@ -385,6 +484,7 @@ fn render() !void {
                     Vector2.init(0.0, -0.8),
                     Vector2.init(0.2, -0.4),
                 },
+                true,
             );
         }
     }
@@ -396,10 +496,16 @@ fn render() !void {
     for (state.particles.items) |p| {
         switch (p.values) {
             .LINE => |line| {
-                drawLines(p.pos, line.len, line.len, &.{
-                    Vector2.init(-0.5, 0),
-                    Vector2.init(0.5, 0),
-                });
+                drawLines(
+                    p.pos,
+                    line.len,
+                    line.len,
+                    &.{
+                        Vector2.init(-0.5, 0),
+                        Vector2.init(0.5, 0),
+                    },
+                    true,
+                );
             },
             .DOT => |dot| {
                 rl.drawCircleV(p.pos, dot.radius, rl.Color.white);
@@ -439,7 +545,22 @@ fn resetAsteroids() !void {
     }
 }
 
+fn resetGame() !void {
+    state.lives = 3;
+    state.score = 0;
+    try resetStage();
+    try resetAsteroids();
+}
+
 fn resetStage() !void {
+    if (state.ship.isDead()) {
+        if (state.lives == 0) {
+            state.reset = true;
+        } else {
+            state.lives -= 1;
+        }
+    }
+
     state.ship.deathTime = 0.0;
 
     state.ship = .{
@@ -478,8 +599,7 @@ pub fn main() !void {
     defer state.particles.deinit();
     defer state.projectiles.deinit();
 
-    try resetStage();
-    try resetAsteroids();
+    try resetGame();
 
     while (!rl.windowShouldClose()) {
         state.delta = rl.getFrameTime();
